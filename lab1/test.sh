@@ -104,9 +104,62 @@ ls -l "$work/dir/plain.txt"           > "$work/want" 2>&1
 "$here/myls" -l "$work/dir/plain.txt" > "$work/got"  2>&1
 report 'ls -l on a single file' "$work/want" "$work/got"
 
+# the assignment spells the options after the directory as well, so getopt has
+# to permute them back
+ls -l "$work/dir" -a           > "$work/want" 2>&1
+"$here/myls" -l "$work/dir" -a > "$work/got"  2>&1
+report 'ls -l dir -a (options after the operand)' "$work/want" "$work/got"
+
+ls "$work/dir" -la           > "$work/want" 2>&1
+"$here/myls" "$work/dir" -la > "$work/got"  2>&1
+report 'ls dir -la (options after the operand)' "$work/want" "$work/got"
+
+# ------------------------------------------------- myls, this time on a terminal
+# Everything above sends the output to a file, and there ls prints one name per
+# line with no colours. The columns and the colours only show up on a terminal,
+# so comparing them at all needs a pseudo-terminal.
+echo 'myls on a terminal:'
+if command -v script > /dev/null 2>&1; then
+	cdir="$work/cols"
+	mkdir -p "$cdir/somedir" "$cdir/another-directory"
+	# names of deliberately different lengths - that is where columns drift apart
+	for n in a bb ccc README.md notes.txt a-very-long-file-name-here.txt \
+	         x yy zzz Makefile src lib docs build.sh tmp q; do
+		: > "$cdir/$n"
+	done
+	chmod +x "$cdir/build.sh"
+	ln -s notes.txt "$cdir/shortcut"
+
+	# ls paints a directory anyone can write to differently from a plain one
+	mkdir -p "$cdir/open-to-all" "$cdir/sticky-open" "$cdir/sticky-only"
+	chmod 777 "$cdir/open-to-all"
+	chmod 1777 "$cdir/sticky-open"
+	chmod 1755 "$cdir/sticky-only"
+
+	for flags in '' '-a'; do
+		script -qec "ls --color=auto $flags '$cdir'" /dev/null > "$work/want"
+		script -qec "'$here/myls' $flags '$cdir'" /dev/null > "$work/got"
+		report "ls --color=auto $flags dir (columns and colours)" "$work/want" "$work/got"
+	done
+
+	# the same listing squeezed into a narrower terminal must re-flow the same way
+	COLUMNS=40 script -qec "ls --color=auto '$cdir'" /dev/null > "$work/want"
+	COLUMNS=40 script -qec "'$here/myls' '$cdir'" /dev/null > "$work/got"
+	report 'ls in a 40-column terminal' "$work/want" "$work/got"
+
+	# over several directories the colour reset still has to appear only once
+	script -qec "ls --color=auto '$cdir' '$cdir/somedir'" /dev/null > "$work/want"
+	script -qec "'$here/myls' '$cdir' '$cdir/somedir'" /dev/null > "$work/got"
+	report 'ls over two directories on a terminal' "$work/want" "$work/got"
+else
+	echo '  skip  "script" is missing, cannot open a pseudo-terminal'
+fi
+
 # ---------------------------------------------------------------- mychmod
 echo 'mychmod:'
 for spec in '644' '766' '0700' '+x' 'u-r' 'g+rw' 'ug+rw' 'uga+rwx' 'a=r' 'o-rwx' 'u+rw,go-w'; do
+	# a previous round may have left the pair read-only, so start from nothing
+	rm -f "$work/a.txt" "$work/b.txt"
 	printf 'x\n' > "$work/a.txt"
 	printf 'x\n' > "$work/b.txt"
 	chmod 644 "$work/a.txt"
@@ -122,6 +175,8 @@ done
 
 # the same, but starting from a mode that already has the execute bits set
 for spec in '+x' 'a=rx' 'u=rwx,go=' ; do
+	# a previous round may have left the pair read-only, so start from nothing
+	rm -f "$work/a.txt" "$work/b.txt"
 	printf 'x\n' > "$work/a.txt"
 	printf 'x\n' > "$work/b.txt"
 	chmod 755 "$work/a.txt"

@@ -28,10 +28,14 @@
 #include <time.h>
 #include <unistd.h>
 
-#define COLOR_DIR  "\033[1;34m"
-#define COLOR_EXEC "\033[1;32m"
-#define COLOR_LINK "\033[1;36m"
-#define COLOR_OFF  "\033[0m"
+/* the exact sequences GNU ls emits for its default LS_COLORS */
+#define COLOR_DIR     "\033[01;34m" /* di - an ordinary directory, blue    */
+#define COLOR_EXEC    "\033[01;32m" /* ex - an executable file, green      */
+#define COLOR_LINK    "\033[01;36m" /* ln - a symbolic link, cyan          */
+#define COLOR_DIR_OW  "\033[34;42m" /* ow - a directory anyone can write   */
+#define COLOR_DIR_TW  "\033[30;42m" /* tw - the same, plus the sticky bit  */
+#define COLOR_DIR_ST  "\033[37;44m" /* st - sticky, not writable by others */
+#define COLOR_OFF     "\033[0m"
 
 /* ls falls back to 80 columns when it cannot ask the terminal */
 #define DEFAULT_TERM_WIDTH 80
@@ -50,6 +54,15 @@ static int opt_all;
 static int use_color;
 static int is_tty;
 static int exit_status;
+
+/*
+ * ls emits exactly one colour reset per run, immediately before the first
+ * coloured name in sorted order. That is not always the first name printed:
+ * the short format fills its columns downwards, so a name from the last row
+ * can still come first in the sorted array.
+ */
+static const struct entry *reset_before;
+static int reset_emitted;
 
 /*
  * Screen width of a name. In UTF-8 the continuation bytes (10xxxxxx) do not
@@ -133,8 +146,24 @@ static const char *color_of(const struct stat *st)
 {
 	if (S_ISLNK(st->st_mode))
 		return COLOR_LINK;
-	if (S_ISDIR(st->st_mode))
+
+	if (S_ISDIR(st->st_mode)) {
+		/*
+		 * A directory anyone can write to gets a warning colour from ls
+		 * rather than plain blue - /tmp is the everyday example.
+		 */
+		int other_writable = (st->st_mode & S_IWOTH) != 0;
+		int sticky = (st->st_mode & S_ISVTX) != 0;
+
+		if (other_writable && sticky)
+			return COLOR_DIR_TW;
+		if (other_writable)
+			return COLOR_DIR_OW;
+		if (sticky)
+			return COLOR_DIR_ST;
 		return COLOR_DIR;
+	}
+
 	if (S_ISREG(st->st_mode) && (st->st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
 		return COLOR_EXEC;
 
@@ -145,10 +174,17 @@ static void print_name(const struct entry *e)
 {
 	const char *color = use_color ? color_of(&e->st) : NULL;
 
-	if (color != NULL)
-		printf("%s%s%s", color, e->name, COLOR_OFF);
-	else
+	if (color == NULL) {
 		fputs(e->name, stdout);
+		return;
+	}
+
+	if (e == reset_before) {
+		fputs(COLOR_OFF, stdout);
+		reset_before = NULL;
+		reset_emitted = 1;
+	}
+	printf("%s%s%s", color, e->name, COLOR_OFF);
 }
 
 static int compare_entries(const void *a, const void *b)
@@ -329,6 +365,7 @@ static void list_columns(const struct entry *v, size_t n)
 	size_t i, cols, rows, r, c;
 	size_t best_cols = 1;
 	int term_width = DEFAULT_TERM_WIDTH;
+	const char *columns_env;
 	struct winsize ws;
 
 	if (n == 0)
@@ -342,6 +379,17 @@ static void list_columns(const struct entry *v, size_t n)
 		return;
 	}
 
+	/*
+	 * Same order as ls: the COLUMNS variable is picked up first, and a
+	 * terminal that answers the ioctl overrides it.
+	 */
+	columns_env = getenv("COLUMNS");
+	if (columns_env != NULL && *columns_env != '\0') {
+		long v = strtol(columns_env, NULL, 10);
+
+		if (v > 0 && v < INT_MAX)
+			term_width = (int)v;
+	}
 	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
 		term_width = ws.ws_col;
 
@@ -388,6 +436,16 @@ static void list_columns(const struct entry *v, size_t n)
 static void list_entries(struct entry *v, size_t n, int show_total)
 {
 	qsort(v, n, sizeof(*v), compare_entries);
+
+	if (use_color && !reset_emitted && reset_before == NULL) {
+		size_t i;
+
+		for (i = 0; i < n; i++)
+			if (color_of(&v[i].st) != NULL) {
+				reset_before = &v[i];
+				break;
+			}
+	}
 
 	if (opt_long)
 		list_long(v, n, show_total);
