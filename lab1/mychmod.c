@@ -83,10 +83,14 @@ static int apply_symbolic(const char *spec, mode_t *mode, mode_t umask_val)
 			return 0;
 		op = *p++;
 
+		/*
+		 * With no u/g/o/a the change applies to everyone, and the sticky
+		 * bit joins in - "+t" is the usual way to set it. With an explicit
+		 * class the sticky bit stays out, so that "u=rwx" leaves it alone
+		 * instead of clearing it.
+		 */
 		if (!who_given)
-			who = ALL_WHO;
-		/* the sticky bit belongs to the file, not to a u/g/o class */
-		who |= S_ISVTX;
+			who = ALL_WHO | S_ISVTX;
 
 		for (; *p != '\0' && *p != ','; p++) {
 			switch (*p) {

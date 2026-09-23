@@ -226,7 +226,11 @@ static void push_entry(struct entry **v, size_t *n, size_t *cap,
 	(*n)++;
 }
 
-static void list_long(const struct entry *v, size_t n)
+/*
+ * show_total is off when the operands are plain files: "ls -l file.txt" prints
+ * the single line without the "total" header, only a directory listing has it.
+ */
+static void list_long(const struct entry *v, size_t n, int show_total)
 {
 	int w_links = 0, w_user = 0, w_group = 0, w_size = 0;
 	unsigned long long blocks = 0;
@@ -257,7 +261,8 @@ static void list_long(const struct entry *v, size_t n)
 	}
 
 	/* st_blocks counts 512-byte blocks, ls reports 1K ones */
-	printf("total %llu\n", blocks / 2);
+	if (show_total)
+		printf("total %llu\n", blocks / 2);
 
 	for (i = 0; i < n; i++) {
 		char mode[11];
@@ -290,11 +295,39 @@ static void list_long(const struct entry *v, size_t n)
 	}
 }
 
-/* Short listing: columns down-then-across on a terminal, one per line otherwise. */
+/* Widest name in column c of a cols x rows layout filled top-to-bottom. */
+static size_t column_width(const struct entry *v, size_t n, size_t rows, size_t c)
+{
+	size_t widest = 0, r;
+
+	for (r = 0; r < rows; r++) {
+		size_t idx = c * rows + r;
+		size_t w;
+
+		if (idx >= n)
+			break;
+		w = display_width(v[idx].name);
+		if (w > widest)
+			widest = w;
+	}
+
+	return widest;
+}
+
+/*
+ * Short listing: columns down-then-across on a terminal, one name per line when
+ * the output goes anywhere else - that is what ls does too.
+ *
+ * Every column is sized to its own longest name, not to the longest name in the
+ * whole listing, so the result matches ls even when the names differ a lot in
+ * length. Finding the layout means trying each column count, which is quadratic
+ * in the number of names; a directory listing is small enough for that not to
+ * matter.
+ */
 static void list_columns(const struct entry *v, size_t n)
 {
-	size_t maxw = 0, i;
-	size_t width, cols, rows, r, c;
+	size_t i, cols, rows, r, c;
+	size_t best_cols = 1;
 	int term_width = DEFAULT_TERM_WIDTH;
 	struct winsize ws;
 
@@ -312,17 +345,23 @@ static void list_columns(const struct entry *v, size_t n)
 	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
 		term_width = ws.ws_col;
 
-	for (i = 0; i < n; i++) {
-		size_t w = display_width(v[i].name);
+	/* the widest layout that still fits the terminal wins */
+	for (cols = 1; cols <= n; cols++) {
+		size_t total = 0;
 
-		if (w > maxw)
-			maxw = w;
+		rows = (n + cols - 1) / cols;
+		for (c = 0; c < cols; c++) {
+			total += column_width(v, n, rows, c);
+			if (c + 1 < cols)
+				total += 2; /* the gap between columns */
+		}
+
+		if (total > (size_t)term_width)
+			break;
+		best_cols = cols;
 	}
 
-	width = maxw + 2;
-	cols = (size_t)term_width / width;
-	if (cols < 1)
-		cols = 1;
+	cols = best_cols;
 	rows = (n + cols - 1) / cols;
 
 	for (r = 0; r < rows; r++) {
@@ -334,20 +373,24 @@ static void list_columns(const struct entry *v, size_t n)
 
 			print_name(&v[idx]);
 
-			/* pad only if another name follows on this row */
-			if (idx + rows < n)
-				printf("%*s", (int)(width - display_width(v[idx].name)), "");
+			/* pad only when another name follows on this row */
+			if (idx + rows < n) {
+				size_t pad = column_width(v, n, rows, c) + 2
+				             - display_width(v[idx].name);
+
+				printf("%*s", (int)pad, "");
+			}
 		}
 		putchar('\n');
 	}
 }
 
-static void list_entries(struct entry *v, size_t n)
+static void list_entries(struct entry *v, size_t n, int show_total)
 {
 	qsort(v, n, sizeof(*v), compare_entries);
 
 	if (opt_long)
-		list_long(v, n);
+		list_long(v, n, show_total);
 	else
 		list_columns(v, n);
 }
@@ -382,7 +425,7 @@ static void list_dir(const char *path, int with_header)
 	}
 	closedir(dp);
 
-	list_entries(v, n);
+	list_entries(v, n, 1); /* a directory listing always gets the "total" line */
 	free_entries(v, n);
 }
 
@@ -449,7 +492,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (nfiles > 0) {
-		list_entries(files, nfiles);
+		list_entries(files, nfiles, 0); /* plain operands get no "total" line */
 		free_entries(files, nfiles);
 	}
 
