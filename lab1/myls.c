@@ -38,7 +38,30 @@ static int opt_long;
 static int opt_all;
 static int use_color;
 static int is_tty;
+static int term_width = DEFAULT_TERM_WIDTH;
 static int exit_status;
+
+static void clear_to_eol(size_t line_width)
+{
+	if (is_tty && line_width > (size_t)term_width)
+		fputs("\033[K", stdout);
+}
+
+/* порядок как у ls: сначала COLUMNS, потом терминал её перебивает */
+static void detect_term_width(void)
+{
+	const char *columns_env = getenv("COLUMNS");
+	struct winsize ws;
+
+	if (columns_env != NULL && *columns_env != '\0') {
+		long v = strtol(columns_env, NULL, 10);
+
+		if (v > 0 && v < INT_MAX)
+			term_width = (int)v;
+	}
+	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+		term_width = ws.ws_col;
+}
 
 /* ls один раз за запуск сбрасывает цвет - перед первым цветным именем
    по порядку сортировки, а не по порядку печати */
@@ -276,6 +299,7 @@ static void list_long(const struct entry *v, size_t n, int show_total)
 	for (i = 0; i < n; i++) {
 		char mode[11];
 		char when[64];
+		size_t line_width;
 
 		mode_string(v[i].st.st_mode, mode);
 		time_string(v[i].st.st_mtime, when, sizeof(when));
@@ -288,7 +312,12 @@ static void list_long(const struct entry *v, size_t n, int show_total)
 		       w_size, (long long)v[i].st.st_size,
 		       when);
 
+		line_width = 10 + 1 + (size_t)w_links + 1 + (size_t)w_user + 1
+		             + (size_t)w_group + 1 + (size_t)w_size + 1
+		             + display_width(when) + 1 + display_width(v[i].name);
+
 		print_name(&v[i]);
+		clear_to_eol(line_width);
 
 		if (S_ISLNK(v[i].st.st_mode)) {
 			char target[PATH_MAX];
@@ -329,9 +358,6 @@ static void list_columns(const struct entry *v, size_t n)
 {
 	size_t i, cols, rows, r, c;
 	size_t best_cols = 1;
-	int term_width = DEFAULT_TERM_WIDTH;
-	const char *columns_env;
-	struct winsize ws;
 
 	if (n == 0)
 		return;
@@ -343,17 +369,6 @@ static void list_columns(const struct entry *v, size_t n)
 		}
 		return;
 	}
-
-	/* порядок как у ls: сначала COLUMNS, потом терминал её перебивает */
-	columns_env = getenv("COLUMNS");
-	if (columns_env != NULL && *columns_env != '\0') {
-		long v = strtol(columns_env, NULL, 10);
-
-		if (v > 0 && v < INT_MAX)
-			term_width = (int)v;
-	}
-	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
-		term_width = ws.ws_col;
 
 	/* берём самую широкую раскладку, которая ещё влезает */
 	for (cols = 1; cols <= n; cols++) {
@@ -375,6 +390,8 @@ static void list_columns(const struct entry *v, size_t n)
 	rows = (n + cols - 1) / cols;
 
 	for (r = 0; r < rows; r++) {
+		size_t line_width = 0;
+
 		for (c = 0; c < cols; c++) {
 			size_t idx = c * rows + r;
 
@@ -382,6 +399,7 @@ static void list_columns(const struct entry *v, size_t n)
 				continue;
 
 			print_name(&v[idx]);
+			line_width += display_width(v[idx].name);
 
 			/* добиваем пробелами, только если справа ещё есть имя */
 			if (idx + rows < n) {
@@ -389,8 +407,10 @@ static void list_columns(const struct entry *v, size_t n)
 				             - display_width(v[idx].name);
 
 				printf("%*s", (int)pad, "");
+				line_width += pad;
 			}
 		}
+		clear_to_eol(line_width);
 		putchar('\n');
 	}
 }
@@ -481,6 +501,7 @@ int main(int argc, char *argv[])
 
 	is_tty = isatty(STDOUT_FILENO);
 	use_color = is_tty;
+	detect_term_width();
 	operands = argc - optind;
 
 	if (operands == 0) {

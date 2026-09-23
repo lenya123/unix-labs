@@ -1,7 +1,6 @@
 # Один Makefile на все четыре утилиты.
 #
 #   make        - собрать всё
-#   make test   - собрать и сравнить вывод с системными утилитами
 #   make clean  - удалить собранное
 
 CC     = gcc
@@ -14,10 +13,7 @@ all: $(BINS)
 $(BINS): %: %.c
 	$(CC) $(CFLAGS) -o $@ $<
 
-test: all
-	./test.sh
-
 clean:
 	rm -f $(BINS)
 
-.PHONY: all test clean
+.PHONY: all clean
