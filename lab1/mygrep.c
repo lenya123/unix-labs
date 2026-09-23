@@ -1,20 +1,4 @@
-/*
- * mygrep - a simplified grep(1) clone.
- *
- * The pattern is a POSIX basic regular expression, matched with <regex.h>.
- *
- * Supported flags:
- *   -i  ignore case
- *   -v  print the lines that do NOT match
- *   -n  prefix every matching line with its line number
- *
- * With no file operands the standard input is read, which is what makes
- * shell pipelines work:
- *   ./mycat file.txt | ./mygrep pattern
- *   ls -l            | ./mygrep pattern
- *
- * Exit status: 0 - something matched, 1 - nothing matched, 2 - an error.
- */
+/* mygrep - аналог grep. Код возврата: 0 нашёл, 1 не нашёл, 2 ошибка */
 #include <errno.h>
 #include <regex.h>
 #include <stdio.h>
@@ -22,9 +6,9 @@
 #include <string.h>
 #include <unistd.h>
 
-static int invert;       /* -v */
-static int show_line_no; /* -n */
-static int show_name;    /* prefix with the file name, as grep does for 2+ files */
+static int invert;
+static int show_line_no;
+static int show_name;    /* имя файла в начале строки - grep так делает при 2+ файлах */
 
 static int matched;
 static int exit_status;
@@ -94,6 +78,7 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 
+	/* шаблон - регулярное выражение, а не подстрока: grep работает именно так */
 	pattern = argv[optind++];
 	rc = regcomp(&re, pattern, cflags);
 	if (rc != 0) {
@@ -105,7 +90,7 @@ int main(int argc, char *argv[])
 	}
 
 	if (optind == argc) {
-		grep_stream(stdin, &re, "(standard input)");
+		grep_stream(stdin, &re, "(standard input)"); /* конвейер: читаем stdin */
 	} else {
 		show_name = (argc - optind) > 1;
 

@@ -1,8 +1,8 @@
-# One Makefile for all four utilities of the practical works.
+# Один Makefile на все четыре утилиты.
 #
-#   make        - build everything
-#   make test   - build, then compare the output against the system utilities
-#   make clean  - remove the binaries
+#   make        - собрать всё
+#   make test   - собрать и сравнить вывод с системными утилитами
+#   make clean  - удалить собранное
 
 CC     = gcc
 CFLAGS = -std=c11 -D_DEFAULT_SOURCE -Wall -Wextra -O2

@@ -1,18 +1,4 @@
-/*
- * myls - a simplified ls(1) clone.
- *
- * Supported flags (parsed with getopt(3), so -l -a and -la are equivalent):
- *   -l  long listing: mode, link count, owner, group, size, mtime, name
- *   -a  also show the entries starting with a dot, including "." and ".."
- *
- * Names are sorted with strcoll(3) in the current locale, exactly as ls does.
- *
- * Colours (only when the output is a terminal, again like ls):
- *   directory   - blue
- *   executable  - green
- *   symlink     - cyan
- *   regular     - no colour
- */
+/* myls - аналог ls: флаги -l и -a, цвета только в терминал */
 #include <dirent.h>
 #include <errno.h>
 #include <grp.h>
@@ -28,24 +14,23 @@
 #include <time.h>
 #include <unistd.h>
 
-/* the exact sequences GNU ls emits for its default LS_COLORS */
-#define COLOR_DIR     "\033[01;34m" /* di - an ordinary directory, blue    */
-#define COLOR_EXEC    "\033[01;32m" /* ex - an executable file, green      */
-#define COLOR_LINK    "\033[01;36m" /* ln - a symbolic link, cyan          */
-#define COLOR_DIR_OW  "\033[34;42m" /* ow - a directory anyone can write   */
-#define COLOR_DIR_TW  "\033[30;42m" /* tw - the same, plus the sticky bit  */
-#define COLOR_DIR_ST  "\033[37;44m" /* st - sticky, not writable by others */
+/* те же коды, что у ls */
+#define COLOR_DIR     "\033[01;34m" /* каталог */
+#define COLOR_EXEC    "\033[01;32m" /* исполняемый */
+#define COLOR_LINK    "\033[01;36m" /* ссылка */
+#define COLOR_DIR_OW  "\033[34;42m" /* каталог, открытый на запись всем */
+#define COLOR_DIR_TW  "\033[30;42m" /* он же со sticky */
+#define COLOR_DIR_ST  "\033[37;44m" /* sticky */
 #define COLOR_OFF     "\033[0m"
 
-/* ls falls back to 80 columns when it cannot ask the terminal */
 #define DEFAULT_TERM_WIDTH 80
 
-/* ls switches from "Mon DD HH:MM" to "Mon DD  YYYY" for anything older than ~6 months */
+/* старше полугода - ls печатает год вместо времени */
 #define SIX_MONTHS (6L * 30 * 24 * 60 * 60)
 
 struct entry {
-	char *name;         /* what is printed */
-	char *path;         /* what is passed to lstat()/readlink() */
+	char *name;         /* что печатаем */
+	char *path;         /* полный путь - для lstat и readlink */
 	struct stat st;
 };
 
@@ -55,21 +40,13 @@ static int use_color;
 static int is_tty;
 static int exit_status;
 
-/*
- * ls emits exactly one colour reset per run, immediately before the first
- * coloured name in sorted order. That is not always the first name printed:
- * the short format fills its columns downwards, so a name from the last row
- * can still come first in the sorted array.
- */
+/* ls один раз за запуск сбрасывает цвет - перед первым цветным именем
+   по порядку сортировки, а не по порядку печати */
 static const struct entry *reset_before;
 static int reset_emitted;
 
-/*
- * Screen width of a name. In UTF-8 the continuation bytes (10xxxxxx) do not
- * take a column of their own, so they must not be counted.
- * Double-width characters (CJK) are still counted as one - they do not turn up
- * in the files this is used on.
- */
+/* ширина имени на экране: в UTF-8 байты-продолжения (10xxxxxx)
+   своей позиции не занимают, их считать нельзя */
 static size_t display_width(const char *s)
 {
 	size_t w = 0;
@@ -81,7 +58,7 @@ static size_t display_width(const char *s)
 	return w;
 }
 
-/* "drwxr-xr-x" - 10 characters plus the terminating NUL */
+/* собирает строку вида drwxr-xr-x */
 static void mode_string(mode_t m, char *out)
 {
 	out[0] = S_ISDIR(m)  ? 'd' :
@@ -148,10 +125,8 @@ static const char *color_of(const struct stat *st)
 		return COLOR_LINK;
 
 	if (S_ISDIR(st->st_mode)) {
-		/*
-		 * A directory anyone can write to gets a warning colour from ls
-		 * rather than plain blue - /tmp is the everyday example.
-		 */
+		/* каталог, куда может писать кто угодно, ls красит не синим,
+		   а предупреждающим цветом - так выглядит /tmp */
 		int other_writable = (st->st_mode & S_IWOTH) != 0;
 		int sticky = (st->st_mode & S_ISVTX) != 0;
 
@@ -230,12 +205,13 @@ static char *xstrdup(const char *s)
 	return p;
 }
 
-/* Adds one entry to a growing array; lstat() failures are reported and skipped. */
 static void push_entry(struct entry **v, size_t *n, size_t *cap,
                        char *name, char *path)
 {
 	struct stat st;
 
+	/* lstat, а не stat: иначе ссылка показалась бы тем файлом, на который
+	   указывает, и никогда не была бы бирюзовой */
 	if (lstat(path, &st) != 0) {
 		fprintf(stderr, "myls: cannot access '%s': %s\n", path, strerror(errno));
 		exit_status = 1;
@@ -262,17 +238,14 @@ static void push_entry(struct entry **v, size_t *n, size_t *cap,
 	(*n)++;
 }
 
-/*
- * show_total is off when the operands are plain files: "ls -l file.txt" prints
- * the single line without the "total" header, only a directory listing has it.
- */
+/* show_total выключен для обычных файлов: у "ls -l file.txt" строки "total" нет */
 static void list_long(const struct entry *v, size_t n, int show_total)
 {
 	int w_links = 0, w_user = 0, w_group = 0, w_size = 0;
 	unsigned long long blocks = 0;
 	size_t i;
 
-	/* first pass: column widths, so the table comes out straight */
+	/* первый проход - ширины колонок, чтобы таблица вышла ровной */
 	for (i = 0; i < n; i++) {
 		char buf[64];
 		int len;
@@ -296,7 +269,7 @@ static void list_long(const struct entry *v, size_t n, int show_total)
 			w_size = len;
 	}
 
-	/* st_blocks counts 512-byte blocks, ls reports 1K ones */
+	/* система считает блоки по 512 байт, а ls печатает килобайтные */
 	if (show_total)
 		printf("total %llu\n", blocks / 2);
 
@@ -331,7 +304,6 @@ static void list_long(const struct entry *v, size_t n, int show_total)
 	}
 }
 
-/* Widest name in column c of a cols x rows layout filled top-to-bottom. */
 static size_t column_width(const struct entry *v, size_t n, size_t rows, size_t c)
 {
 	size_t widest = 0, r;
@@ -350,16 +322,9 @@ static size_t column_width(const struct entry *v, size_t n, size_t rows, size_t 
 	return widest;
 }
 
-/*
- * Short listing: columns down-then-across on a terminal, one name per line when
- * the output goes anywhere else - that is what ls does too.
- *
- * Every column is sized to its own longest name, not to the longest name in the
- * whole listing, so the result matches ls even when the names differ a lot in
- * length. Finding the layout means trying each column count, which is quadratic
- * in the number of names; a directory listing is small enough for that not to
- * matter.
- */
+/* в терминал - колонками сверху вниз, иначе по одному имени в строку: ls
+   ведёт себя так же. Ширина каждой колонки считается по ней самой, а не по
+   самому длинному имени во всём списке - иначе вывод разъезжается */
 static void list_columns(const struct entry *v, size_t n)
 {
 	size_t i, cols, rows, r, c;
@@ -371,7 +336,7 @@ static void list_columns(const struct entry *v, size_t n)
 	if (n == 0)
 		return;
 
-	if (!is_tty) { /* not a terminal - ls prints one name per line */
+	if (!is_tty) { /* не терминал - по одному имени в строку */
 		for (i = 0; i < n; i++) {
 			print_name(&v[i]);
 			putchar('\n');
@@ -379,10 +344,7 @@ static void list_columns(const struct entry *v, size_t n)
 		return;
 	}
 
-	/*
-	 * Same order as ls: the COLUMNS variable is picked up first, and a
-	 * terminal that answers the ioctl overrides it.
-	 */
+	/* порядок как у ls: сначала COLUMNS, потом терминал её перебивает */
 	columns_env = getenv("COLUMNS");
 	if (columns_env != NULL && *columns_env != '\0') {
 		long v = strtol(columns_env, NULL, 10);
@@ -393,7 +355,7 @@ static void list_columns(const struct entry *v, size_t n)
 	if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
 		term_width = ws.ws_col;
 
-	/* the widest layout that still fits the terminal wins */
+	/* берём самую широкую раскладку, которая ещё влезает */
 	for (cols = 1; cols <= n; cols++) {
 		size_t total = 0;
 
@@ -401,7 +363,7 @@ static void list_columns(const struct entry *v, size_t n)
 		for (c = 0; c < cols; c++) {
 			total += column_width(v, n, rows, c);
 			if (c + 1 < cols)
-				total += 2; /* the gap between columns */
+				total += 2; /* зазор между колонками */
 		}
 
 		if (total > (size_t)term_width)
@@ -421,7 +383,7 @@ static void list_columns(const struct entry *v, size_t n)
 
 			print_name(&v[idx]);
 
-			/* pad only when another name follows on this row */
+			/* добиваем пробелами, только если справа ещё есть имя */
 			if (idx + rows < n) {
 				size_t pad = column_width(v, n, rows, c) + 2
 				             - display_width(v[idx].name);
@@ -483,7 +445,7 @@ static void list_dir(const char *path, int with_header)
 	}
 	closedir(dp);
 
-	list_entries(v, n, 1); /* a directory listing always gets the "total" line */
+	list_entries(v, n, 1); /* у каталога строка "total" есть */
 	free_entries(v, n);
 }
 
@@ -494,13 +456,13 @@ static void usage(const char *prog)
 
 int main(int argc, char *argv[])
 {
-	struct entry *files = NULL;      /* non-directory operands, printed first */
+	struct entry *files = NULL;      /* обычные файлы - печатаются первыми */
 	size_t nfiles = 0, cap = 0;
 	char **dirs;
 	size_t ndirs = 0, i;
 	int opt, operands;
 
-	/* the locale drives both strcoll() sorting and the month name in the date */
+	/* локаль нужна и для сортировки strcoll, и для названия месяца в дате */
 	setlocale(LC_ALL, "");
 
 	while ((opt = getopt(argc, argv, "la")) != -1) {
@@ -532,7 +494,7 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 
-	/* ls splits the operands: plain files are listed first, directories after */
+	/* как ls: сначала обычные файлы, потом каталоги */
 	for (i = 0; i < (size_t)operands; i++) {
 		char *arg = argv[optind + (int)i];
 		struct stat st;
@@ -550,14 +512,14 @@ int main(int argc, char *argv[])
 	}
 
 	if (nfiles > 0) {
-		list_entries(files, nfiles, 0); /* plain operands get no "total" line */
+		list_entries(files, nfiles, 0); /* у файлов строки "total" нет */
 		free_entries(files, nfiles);
 	}
 
 	for (i = 0; i < ndirs; i++) {
 		if (nfiles > 0 || i > 0)
 			putchar('\n');
-		/* a header is printed as soon as there is more than one operand */
+		/* заголовок нужен, когда аргументов больше одного */
 		list_dir(dirs[i], operands > 1);
 	}
 

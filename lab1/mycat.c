@@ -1,25 +1,15 @@
-/*
- * mycat - a simplified cat(1) clone.
- *
- * Supported flags:
- *   -n  number all output lines
- *   -b  number non-empty output lines only (overrides -n)
- *   -E  display '$' at the end of each line
- *
- * With no file operands (or with "-") the standard input is read,
- * so mycat works inside a shell pipeline.
- */
+/* mycat - аналог cat: флаги -n, -b, -E */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-static int number_all;      /* -n */
-static int number_nonblank; /* -b */
-static int show_ends;       /* -E */
+static int number_all;
+static int number_nonblank;
+static int show_ends;
 
-static int line_no = 1;     /* line counter is continuous across files, like cat */
+static int line_no = 1;     /* счётчик сквозной по всем файлам, как у cat */
 static int exit_status;
 
 static void cat_stream(FILE *fp)
@@ -74,6 +64,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	/* файлов нет - читаем стандартный ввод, отсюда и работа в конвейере */
 	if (optind == argc) {
 		cat_stream(stdin);
 		return exit_status;

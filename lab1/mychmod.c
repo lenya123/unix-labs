@@ -1,18 +1,4 @@
-/*
- * mychmod - a simplified chmod(1) clone.
- *
- * The mode is either octal or symbolic:
- *   ./mychmod 766 file.txt
- *   ./mychmod +x file.txt
- *   ./mychmod u-r file.txt
- *   ./mychmod g+rw file.txt
- *   ./mychmod ug+rw file.txt
- *   ./mychmod uga+rwx file.txt
- *
- * A symbolic mode is [ugoa...][+-=][rwxXst...], and several clauses may be
- * separated by commas: "u+rw,go-w". When no u/g/o/a is given the change
- * applies to everyone but is filtered through the umask, as chmod does.
- */
+/* mychmod - аналог chmod: режим восьмеричный (766) или символьный (ug+rw) */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +11,6 @@
 #define ALL_X (S_IXUSR | S_IXGRP | S_IXOTH)
 #define ALL_WHO (S_IRWXU | S_IRWXG | S_IRWXO | S_ISUID | S_ISGID)
 
-/* Parses "766" / "0644". Returns 0 if the string is not a valid octal mode. */
 static int parse_octal(const char *s, mode_t *out)
 {
 	const char *p;
@@ -46,11 +31,7 @@ static int parse_octal(const char *s, mode_t *out)
 	return 1;
 }
 
-/*
- * Applies a symbolic mode to *mode (which carries the full st_mode, file type
- * included, because 'X' needs to know whether this is a directory).
- * Returns 0 when the spec does not parse.
- */
+/* mode приходит целиком, с типом файла: для 'X' надо знать, каталог это или нет */
 static int apply_symbolic(const char *spec, mode_t *mode, mode_t umask_val)
 {
 	const char *p = spec;
@@ -83,12 +64,8 @@ static int apply_symbolic(const char *spec, mode_t *mode, mode_t umask_val)
 			return 0;
 		op = *p++;
 
-		/*
-		 * With no u/g/o/a the change applies to everyone, and the sticky
-		 * bit joins in - "+t" is the usual way to set it. With an explicit
-		 * class the sticky bit stays out, so that "u=rwx" leaves it alone
-		 * instead of clearing it.
-		 */
+		/* без ugoa изменение идёт всем, и sticky заодно; с явным классом
+		   sticky не трогаем, иначе "u=rwx" его сбросит */
 		if (!who_given)
 			who = ALL_WHO | S_ISVTX;
 
@@ -103,7 +80,7 @@ static int apply_symbolic(const char *spec, mode_t *mode, mode_t umask_val)
 			case 'x':
 				bits |= ALL_X;
 				break;
-			case 'X': /* execute only for directories or already-executable files */
+			case 'X': /* x только каталогам и тому, что уже исполняемое */
 				if (S_ISDIR(*mode) || (*mode & ALL_X))
 					bits |= ALL_X;
 				break;
@@ -120,7 +97,7 @@ static int apply_symbolic(const char *spec, mode_t *mode, mode_t umask_val)
 
 		target = bits & who;
 		if (!who_given)
-			target &= ~umask_val; /* "+x" respects the umask, "a+x" does not */
+			target &= ~umask_val; /* "+x" учитывает umask, "a+x" - нет */
 
 		switch (op) {
 		case '+':
@@ -165,11 +142,11 @@ int main(int argc, char *argv[])
 	spec = argv[1];
 	is_octal = parse_octal(spec, &octal);
 
-	/* there is no way to read the umask without setting it, so set and restore */
+	/* прочитать umask нельзя, только выставить - ставим и сразу возвращаем */
 	um = umask(0);
 	umask(um);
 
-	/* reject a broken symbolic mode once, before touching any file */
+	/* неверный режим отвергаем до того, как тронули хоть один файл */
 	probe = 0;
 	if (!is_octal && !apply_symbolic(spec, &probe, um)) {
 		fprintf(stderr, "%s: invalid mode: '%s'\n", argv[0], spec);
@@ -180,6 +157,7 @@ int main(int argc, char *argv[])
 		struct stat st;
 		mode_t newmode;
 
+		/* stat, а не lstat: chmod идёт по ссылке, у самой ссылки прав нет */
 		if (stat(argv[i], &st) != 0) {
 			fprintf(stderr, "%s: cannot access '%s': %s\n",
 			        argv[0], argv[i], strerror(errno));
