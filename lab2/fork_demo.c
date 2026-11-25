@@ -19,14 +19,14 @@ static void write_str(const char *s)
 
 static void at_exit_handler(void)
 {
-	printf("[pid %d] atexit: обработчик сработал, процесс завершается\n", getpid());
+	printf("atexit отработал pid %d\n", getpid());
 	fflush(stdout);
 }
 
 static void sigint_handler(int sig)
 {
 	(void)sig;
-	write_str("\n  <-- signal(): SIGINT (2), прерывание с клавиатуры\n");
+	write_str("\nпоймал SIGINT 2 через signal\n");
 }
 
 static void sigterm_handler(int sig, siginfo_t *info, void *context)
@@ -34,7 +34,7 @@ static void sigterm_handler(int sig, siginfo_t *info, void *context)
 	(void)sig;
 	(void)info;
 	(void)context;
-	write_str("  <-- sigaction(): SIGTERM (15), запрос на завершение\n");
+	write_str("поймал SIGTERM 15 через sigaction\n");
 }
 
 static int install_handlers(void)
@@ -63,16 +63,14 @@ static void child_work(void)
 {
 	unsigned int left = CHILD_LIFETIME;
 
-	printf("[pid %d] дочерний:  pid=%d  ppid=%d\n", getpid(), getpid(), getppid());
-	printf("[pid %d] дочерний: живу %d секунд, можно присылать сигналы\n",
-	       getpid(), CHILD_LIFETIME);
+	printf("ребенок pid %d ppid %d\n", getpid(), getppid());
+	printf("ребенок живет %d сек можно кидать сигналы\n", CHILD_LIFETIME);
 	fflush(stdout);
 
 	while (left > 0)
 		left = sleep(left);
 
-	printf("[pid %d] дочерний: время вышло, выхожу с кодом %d\n",
-	       getpid(), CHILD_EXIT_CODE);
+	printf("ребенок выходит с кодом %d\n", CHILD_EXIT_CODE);
 	fflush(stdout);
 }
 
@@ -80,14 +78,12 @@ static int parent_work(pid_t child)
 {
 	int status;
 
-	printf("[pid %d] родитель: pid=%d  ppid=%d,  дочерний pid=%d\n",
-	       getpid(), getpid(), getppid(), child);
+	printf("родитель pid %d ppid %d ребенок %d\n", getpid(), getppid(), child);
 	fflush(stdout);
 
 	while (waitpid(child, &status, 0) < 0) {
 		if (errno == EINTR) {
-			printf("[pid %d] родитель: ожидание прервано сигналом, продолжаю ждать\n",
-			       getpid());
+			printf("wait прервался сигналом ждем дальше\n");
 			fflush(stdout);
 			continue;
 		}
@@ -96,13 +92,11 @@ static int parent_work(pid_t child)
 	}
 
 	if (WIFEXITED(status))
-		printf("[pid %d] родитель: дочерний завершился сам, код завершения %d\n",
-		       getpid(), WEXITSTATUS(status));
+		printf("ребенок вышел сам код %d\n", WEXITSTATUS(status));
 	else if (WIFSIGNALED(status))
-		printf("[pid %d] родитель: дочерний убит сигналом %d\n",
-		       getpid(), WTERMSIG(status));
+		printf("ребенка убил сигнал %d\n", WTERMSIG(status));
 	else
-		printf("[pid %d] родитель: дочерний остановлен\n", getpid());
+		printf("ребенок остановлен\n");
 
 	fflush(stdout);
 	return 0;
@@ -113,14 +107,14 @@ int main(void)
 	pid_t pid;
 
 	if (atexit(at_exit_handler) != 0) {
-		fprintf(stderr, "atexit: не удалось зарегистрировать обработчик\n");
+		fprintf(stderr, "atexit не сработал\n");
 		return 1;
 	}
 
 	if (install_handlers() != 0)
 		return 1;
 
-	printf("[pid %d] до fork: pid=%d  ppid=%d\n", getpid(), getpid(), getppid());
+	printf("до fork pid %d ppid %d\n", getpid(), getppid());
 	fflush(stdout);
 
 	pid = fork();
